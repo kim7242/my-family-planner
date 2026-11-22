@@ -13,6 +13,48 @@
   let messagingInstance = null;
   let swRegistration = null;
 
+  function withTimeout(promise, ms, label) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(label + ' 시간 초과(' + Math.round(ms / 1000) + '초)')), ms);
+      promise.then(
+        (val) => { clearTimeout(timer); resolve(val); },
+        (err) => { clearTimeout(timer); reject(err); }
+      );
+    });
+  }
+
+  function waitForWorkerActive(reg, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      if (reg.active && reg.active.state === 'activated') {
+        resolve(reg);
+        return;
+      }
+      const worker = reg.installing || reg.waiting || reg.active;
+      if (!worker) {
+        resolve(reg);
+        return;
+      }
+      if (worker.state === 'activated') {
+        resolve(reg);
+        return;
+      }
+      const timer = setTimeout(() => {
+        resolve(reg);
+      }, timeoutMs || 6000);
+      worker.addEventListener('statechange', function onChange() {
+        if (worker.state === 'activated') {
+          clearTimeout(timer);
+          worker.removeEventListener('statechange', onChange);
+          resolve(reg);
+        } else if (worker.state === 'redundant') {
+          clearTimeout(timer);
+          worker.removeEventListener('statechange', onChange);
+          reject(new Error('서비스 워커가 활성화되지 못했습니다. 새로고침 후 다시 시도해 주세요.'));
+        }
+      });
+    });
+  }
+
   function ensureFirebase() {
     if (typeof firebase === 'undefined') return null;
     if (!firebase.apps || firebase.apps.length === 0) {
@@ -37,11 +79,15 @@
 
   async function ensureServiceWorker() {
     if (!('serviceWorker' in navigator)) return null;
-    if (swRegistration) return swRegistration;
-    swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
-      scope: '/firebase-cloud-messaging-push-scope'
-    });
-    await navigator.serviceWorker.ready;
+    if (swRegistration && swRegistration.active) return swRegistration;
+
+    const reg = await withTimeout(
+      navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' }),
+      10000,
+      '서비스 워커 등록'
+    );
+    await waitForWorkerActive(reg, 6000);
+    swRegistration = reg;
     return swRegistration;
   }
 
@@ -91,21 +137,33 @@
           return JSON.stringify({ ok: false, error: 'VAPID_MISSING' });
         }
 
-        const permission = await Notification.requestPermission();
+        const permission = await withTimeout(
+          Notification.requestPermission(),
+          15000,
+          '알림 권한 요청'
+        );
         if (permission !== 'granted') {
           return JSON.stringify({ ok: false, error: '알림 권한이 거부되었습니다. 기기/브라우저 설정에서 알림을 허용해 주세요.' });
         }
 
         const reg = await ensureServiceWorker();
+        if (!reg) {
+          return JSON.stringify({ ok: false, error: '서비스 워커를 등록할 수 없습니다.' });
+        }
+
         const messaging = ensureFirebase();
         if (!messaging) {
           return JSON.stringify({ ok: false, error: 'Firebase Messaging 초기화에 실패했습니다.' });
         }
 
-        const token = await messaging.getToken({
-          vapidKey: vapidKey.trim(),
-          serviceWorkerRegistration: reg
-        });
+        const token = await withTimeout(
+          messaging.getToken({
+            vapidKey: vapidKey.trim(),
+            serviceWorkerRegistration: reg
+          }),
+          15000,
+          'FCM 토큰 발급'
+        );
 
         if (!token) {
           return JSON.stringify({ ok: false, error: '푸시 토큰을 발급받지 못했습니다. VAPID 키를 확인해 주세요.' });
