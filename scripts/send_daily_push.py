@@ -109,10 +109,43 @@ def should_send_now(push_settings: dict, now_kst: datetime, force: bool) -> bool
     return False
 
 
+def collect_unfinished_todos(target_dt: datetime, tasks: list, recurring_tasks: list, done_map: dict) -> list[str]:
+    items = []
+    for t in tasks or []:
+        if isinstance(t, dict) and not t.get("done"):
+            text = str(t.get("text", "")).strip()
+            if text:
+                items.append(text)
+    items.extend(get_today_recurring(target_dt, recurring_tasks, done_map or {}))
+    return items
+
+
+def collect_unfinished_supplies(supplies) -> tuple[int, list[str]]:
+    supply_count = 0
+    supply_cats = []
+    if isinstance(supplies, dict):
+        for cat, items in supplies.items():
+            if not isinstance(items, list):
+                continue
+            rem = [i for i in items if isinstance(i, dict) and not i.get("done")]
+            if rem:
+                supply_count += len(rem)
+                supply_cats.append(str(cat))
+    return supply_count, supply_cats
+
+
+def format_preview(items: list[str], limit: int = 3) -> str:
+    preview = ", ".join(items[:limit])
+    extra = f" 외 {len(items) - limit}건" if len(items) > limit else ""
+    return f"{preview}{extra}"
+
+
 def main():
     force = os.environ.get("FORCE_SEND", "").lower() in ("1", "true", "yes")
     now_kst = datetime.now(KST)
     today_str = now_kst.strftime("%Y-%m-%d")
+    yesterday_kst = now_kst - timedelta(days=1)
+    yesterday_str = yesterday_kst.strftime("%Y-%m-%d")
 
     push_settings = fetch_json("push_settings") or {}
     if not should_send_now(push_settings, now_kst, force):
@@ -129,43 +162,43 @@ def main():
     recurring_tasks = fetch_json("recurring_tasks") or []
     recurring_done = fetch_json(f"recurring_done/{today_str}") or {}
 
-    todo_items = []
-    for t in tasks:
-        if isinstance(t, dict) and not t.get("done"):
-            text = str(t.get("text", "")).strip()
-            if text:
-                todo_items.append(text)
-    todo_items.extend(get_today_recurring(now_kst, recurring_tasks, recurring_done))
+    y_tasks = fetch_json(f"tasks/{yesterday_str}") or []
+    y_supplies = fetch_json(f"supplies/{yesterday_str}") or {}
+    y_recurring_done = fetch_json(f"recurring_done/{yesterday_str}") or {}
 
-    supply_count = 0
-    supply_cats = []
-    if isinstance(supplies, dict):
-        for cat, items in supplies.items():
-            if not isinstance(items, list):
-                continue
-            rem = [i for i in items if isinstance(i, dict) and not i.get("done")]
-            if rem:
-                supply_count += len(rem)
-                supply_cats.append(str(cat))
-
+    todo_items = collect_unfinished_todos(now_kst, tasks, recurring_tasks, recurring_done)
+    supply_count, supply_cats = collect_unfinished_supplies(supplies)
     today_annivs = get_today_anniversaries(now_kst, anniversaries)
 
-    if not todo_items and supply_count == 0 and not today_annivs:
+    y_todo_items = collect_unfinished_todos(yesterday_kst, y_tasks, recurring_tasks, y_recurring_done)
+    y_supply_count, y_supply_cats = collect_unfinished_supplies(y_supplies)
+
+    has_today = bool(todo_items or supply_count > 0 or today_annivs)
+    has_yesterday = bool(y_todo_items or y_supply_count > 0)
+
+    if not has_today and not has_yesterday:
         if not force:
-            print("오늘 예정된 할 일·준비물·기념일이 없어 알림을 건너뜁니다.")
+            print("오늘 일정 및 어제 미완료 일정이 없어 알림을 건너뜁니다.")
             return
-        body = "테스트 발송: 오늘 등록된 일정은 없지만 푸시 연동이 정상입니다! 🎉"
+        body = "테스트 발송: 오늘·어제 미완료 일정은 없지만 푸시 연동이 정상입니다! 🎉"
     else:
-        parts = []
+        lines = []
         if today_annivs:
-            parts.append(f"🎂 {', '.join(today_annivs)}")
+            lines.append(f"🎂 {', '.join(today_annivs)}")
         if todo_items:
-            preview = ", ".join(todo_items[:3])
-            extra = f" 외 {len(todo_items) - 3}건" if len(todo_items) > 3 else ""
-            parts.append(f"✅ 할일 {len(todo_items)}건 ({preview}{extra})")
+            lines.append(f"✅ 오늘 할일 {len(todo_items)}건 ({format_preview(todo_items)})")
         if supply_count > 0:
-            parts.append(f"🎒 준비물 {supply_count}개 ({', '.join(supply_cats[:2])})")
-        body = " / ".join(parts)
+            lines.append(f"🎒 오늘 준비물 {supply_count}개 ({', '.join(supply_cats[:2])})")
+
+        if has_yesterday:
+            y_parts = []
+            if y_todo_items:
+                y_parts.append(f"할일 {len(y_todo_items)}건 ({format_preview(y_todo_items)})")
+            if y_supply_count > 0:
+                y_parts.append(f"준비물 {y_supply_count}개 ({', '.join(y_supply_cats[:2])})")
+            lines.append(f"⏪ 어제 미완료: {' · '.join(y_parts)}")
+
+        body = "\n".join(lines)
 
     title = f"🐤 {now_kst.strftime('%m월 %d일')} 가족 플래너"
 
