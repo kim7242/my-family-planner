@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Firebase CLI cache
+.firebase/
+**/.firebase/
+
+# Secrets (never commit service account keys)
+*service-account*.json
+*firebase-adminsdk*.json
+.env

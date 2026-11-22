@@ -1,0 +1,28 @@
+name: Daily Family Planner Push
+
+on:
+  schedule:
+    # 매시 00분, 15분, 30분, 45분마다 실행 (설정된 KST 시각에 맞춰 하루 1회 자동 발송)
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: '시간 무관 즉시 테스트 발송 (true / false)'
+        required: false
+        default: 'true'
+
+jobs:
+  send-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install firebase-admin requests korean-lunar-calendar
+      - name: Send daily push notification
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FORCE_SEND: ${{ github.event.inputs.force_send || 'false' }}
+        run: python scripts/send_daily_push.py
