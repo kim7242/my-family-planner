@@ -101,8 +101,9 @@ def should_send_now(push_settings: dict, now_kst: datetime, force: bool) -> bool
 
     now_minutes = now_kst.hour * 60 + now_kst.minute
     target_minutes = hour * 60 + minute
-    # 설정 시각 이후 ~ 59분 이내에 실행되면 발송 (GitHub Actions cron 지연 대응)
-    if target_minutes <= now_minutes < target_minutes + 60:
+    # 설정 시각 3분 전부터 당일 중(22:00 이전) 아직 미발송 상태면 누락 없이 1회 발송
+    # (GitHub Actions cron 지연에도 절대 누락되지 않으며 lastSentDate로 중복 발송 방지)
+    if (target_minutes - 3) <= now_minutes and now_kst.hour < 22:
         return True
 
     print(f"아직 발송 시각이 아닙니다. (현재 KST {now_kst.strftime('%H:%M')}, 설정 {target_time})")

@@ -2,8 +2,15 @@ name: Daily Family Planner Push
 
 on:
   schedule:
-    # 매시 00분, 15분, 30분, 45분마다 실행 (설정된 KST 시각에 맞춰 하루 1회 자동 발송)
-    - cron: '*/15 * * * *'
+    # GitHub Actions 무료 cron은 15분 간격(하루 96회)일 때 스로틀링으로 대폭 스킵되므로
+    # 정각(:00) 혼잡을 피해 아침 핵심 시간대 위주로 슬롯을 배치 (UTC 기준 = KST - 9시간)
+    - cron: '2 22 * * *'   # KST 07:02
+    - cron: '17 22 * * *'  # KST 07:17 (백업 / 07:15 대응)
+    - cron: '32 22 * * *'  # KST 07:32 (07:30 대응)
+    - cron: '2 23 * * *'   # KST 08:02 (08:00 대응)
+    - cron: '32 23 * * *'  # KST 08:32 (08:30 대응)
+    - cron: '2 0 * * *'    # KST 09:02 (09:00 대응)
+    - cron: '2 1 * * *'    # KST 10:02 (최종 백업 / 10:00 대응)
   workflow_dispatch:
     inputs:
       force_send:
